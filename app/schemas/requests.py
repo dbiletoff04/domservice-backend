@@ -1,0 +1,159 @@
+from datetime import datetime
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+from app.schemas.common import RequestStatusCode
+
+
+class CreateRequestIn(BaseModel):
+    address: str = Field(..., min_length=3, max_length=255, description="Адрес дома")
+    apartment: str = Field(..., min_length=1, max_length=16, description="Номер квартиры")
+    category_id: int = Field(..., ge=1, description="ID категории проблемы")
+    description: str = Field(..., min_length=3, max_length=1000, description="Описание проблемы")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "address": "г. Волжский, ул. Ленина, д. 97",
+                "apartment": "42",
+                "category_id": 1,
+                "description": "Протекает кран на кухне под раковиной",
+            }
+        }
+    )
+
+
+class DispatcherCreateRequestIn(CreateRequestIn):
+    phone: str = Field(..., min_length=10, max_length=20, description="Телефон звонящего жителя")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "phone": "+79001112233",
+                "address": "г. Волжский, ул. Ленина, д. 97",
+                "apartment": "42",
+                "category_id": 1,
+                "description": "Заявка принята по телефону: свищ на трубе",
+            }
+        }
+    )
+
+
+class RequestCreatedOut(BaseModel):
+    request_id: int
+    request_number: str
+    status: RequestStatusCode
+    status_name: str
+    deadline_display: str = "Уточняется"
+    created_at: datetime
+    message: str = "Заявка принята"
+
+
+class RequestSummaryOut(BaseModel):
+    request_id: int
+    request_number: str
+    category_name: str
+    address: str
+    apartment: str
+    status: RequestStatusCode
+    status_name: str
+    deadline_at: datetime | None = None
+    deadline_display: str
+    created_at: datetime
+
+
+class StatusHistoryItemOut(BaseModel):
+    history_id: int
+    from_status: RequestStatusCode | None = None
+    to_status: RequestStatusCode
+    to_status_name: str
+    actor_name: str
+    comment: str | None = None
+    changed_at: datetime
+
+
+class RequestDetailOut(BaseModel):
+    request_id: int
+    request_number: str
+    address: str
+    apartment: str
+    category_id: int
+    category_name: str
+    description: str
+    status: RequestStatusCode
+    status_name: str
+    master_name: str | None = None
+    resident_phone: str | None = Field(
+        default=None, description="Телефон жителя (передаётся мастеру и диспетчеру)"
+    )
+    deadline_at: datetime | None = None
+    deadline_display: str
+    created_at: datetime
+    updated_at: datetime
+    history: list[StatusHistoryItemOut]
+
+
+class ConfirmWorkIn(BaseModel):
+    resolution: Literal["accepted"] = "accepted"
+
+
+class RejectWorkIn(BaseModel):
+    comment: str = Field(
+        ...,
+        min_length=3,
+        max_length=500,
+        description="Обязательный комментарий: что именно не решено",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"comment": "Кран всё ещё подтекает после ухода мастера"}}
+    )
+
+
+class AssignMasterIn(BaseModel):
+    master_id: int = Field(..., ge=1, description="ID мастера")
+    deadline_at: datetime | None = Field(
+        default=None, description="Плановый срок выполнения (если не задан — «Уточняется»)"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "master_id": 5,
+                "deadline_at": "2026-11-12T12:00:00+03:00",
+            }
+        }
+    )
+
+
+class CompleteTaskIn(BaseModel):
+    status: Literal["completed"] = "completed"
+
+
+class RequestStatusActionOut(BaseModel):
+    request_id: int
+    request_number: str
+    status: RequestStatusCode
+    status_name: str
+    master_id: int | None = None
+    deadline_at: datetime | None = None
+    deadline_display: str | None = None
+    comment: str | None = None
+
+
+class DispatcherRequestItemOut(RequestSummaryOut):
+    master_name: str | None = None
+    last_comment: str | None = None
+
+
+class MasterTaskItemOut(BaseModel):
+    request_id: int
+    request_number: str
+    address: str
+    apartment: str
+    description: str
+    resident_phone: str
+    status: RequestStatusCode
+    status_name: str
+    is_returned: bool = False
+    return_comment: str | None = None
+    deadline_display: str
