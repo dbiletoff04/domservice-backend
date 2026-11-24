@@ -24,6 +24,7 @@ class CurrentUser:
     full_name: str | None
     role: str
     company_id: int | None
+    consent_at: datetime | None = None
 
 
 def create_access_token(user: AppUser) -> str:
@@ -99,6 +100,7 @@ async def get_current_user(
         full_name=user.full_name,
         role=user.role_code,
         company_id=user.company_id,
+        consent_at=user.consent_at,
     )
 
 

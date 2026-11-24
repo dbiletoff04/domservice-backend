@@ -22,7 +22,6 @@ class SmsCodeRecord:
     attempts: int = 0
 
 
-# Временное хранилище одноразовых СМС-кодов в памяти процесса (TTL = 5 минут)
 _SMS_CODES: dict[str, SmsCodeRecord] = {}
 
 
@@ -42,9 +41,12 @@ def normalize_phone(raw_phone: str) -> str:
     return f"+{digits}"
 
 
-def issue_sms_code(raw_phone: str) -> tuple[str, int]:
-    """Генерирует одноразовый 4-значный код и записывает его в журнал программы вместо отправки СМС."""
+async def issue_sms_code(db: AsyncSession, raw_phone: str) -> tuple[str, int, bool]:
+    """Генерирует код в журнал и сообщает сайту, нужно ли запрашивать согласие ПДн."""
     phone = normalize_phone(raw_phone)
+    user = await db.scalar(select(AppUser).where(AppUser.phone == phone))
+    requires_consent = user is None or user.consent_at is None
+
     code = f"{secrets.randbelow(10000):04d}"
     ttl = settings.sms_code_ttl_seconds
     _SMS_CODES[phone] = SmsCodeRecord(
@@ -53,15 +55,17 @@ def issue_sms_code(raw_phone: str) -> tuple[str, int]:
     )
 
     logger.info(
-        "[SMS-ЗАГЛУШКА] Код для входа на номер %s: %s (действителен %s сек.)",
+        "[SMS-ЗАГЛУШКА] Код для входа на номер %s: %s (действителен %s сек., требуется согласие ПДн: %s)",
         phone,
         code,
         ttl,
+        requires_consent,
     )
-    return phone, ttl
+    return phone, ttl, requires_consent
 
 
-def verify_sms_code(phone: str, code: str) -> None:
+def validate_sms_code(phone: str, code: str) -> None:
+    """Проверяет код, не удаляя его до прохождения проверки согласия на ПДн."""
     record = _SMS_CODES.get(phone)
     if record is None:
         raise HTTPException(
@@ -90,7 +94,8 @@ def verify_sms_code(phone: str, code: str) -> None:
             detail="Неверный СМС-код.",
         )
 
-    # Код одноразовый — удаляем сразу после успешной проверки
+
+def consume_sms_code(phone: str) -> None:
     _SMS_CODES.pop(phone, None)
 
 
@@ -101,7 +106,7 @@ async def authenticate_with_sms(
     consent_accepted: bool,
 ) -> tuple[str, AppUser]:
     phone = normalize_phone(raw_phone)
-    verify_sms_code(phone, code)
+    validate_sms_code(phone, code)
 
     user = await db.scalar(select(AppUser).where(AppUser.phone == phone))
     now = datetime.now(timezone.utc)
@@ -110,7 +115,7 @@ async def authenticate_with_sms(
         if not consent_accepted:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Необходимо согласие на обработку персональных данных (ФЗ-152)",
+                detail="Необходимо согласие на обработку данных",
             )
         user = AppUser(
             phone=phone,
@@ -122,15 +127,20 @@ async def authenticate_with_sms(
         db.add(user)
         await db.commit()
         await db.refresh(user)
+        logger.info("[CONSENT] Зарегистрирован новый пользователь и записано согласие: phone=%s, consent_at=%s", phone, now.isoformat())
     elif user.consent_at is None:
         if not consent_accepted:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="При первом входе необходимо согласие на обработку персональных данных (ФЗ-152)",
+                detail="Необходимо согласие на обработку данных",
             )
         user.consent_at = now
         await db.commit()
         await db.refresh(user)
+        logger.info("[CONSENT] Записано согласие при первом входе: user_id=%s, consent_at=%s", user.user_id, now.isoformat())
+
+    # Удаляем одноразовый код только после успешного входа
+    consume_sms_code(phone)
 
     token = create_access_token(user)
     logger.info(

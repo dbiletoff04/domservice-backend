@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.common import UserRoleCode
 
@@ -13,6 +14,10 @@ class RequestCodeIn(BaseModel):
 class RequestCodeOut(BaseModel):
     phone: str
     expires_in_seconds: int
+    requires_consent: bool = Field(
+        ...,
+        description="True, если это первый вход и сайт должен запросить согласие на обработку ПДн (NFR-08)",
+    )
     message: str = "Одноразовый код сформирован и записан в журнал сервера"
 
 
@@ -41,6 +46,10 @@ class UserProfile(BaseModel):
     full_name: str | None = None
     role: UserRoleCode
     company_id: int | None = None
+    consent_at: datetime | None = Field(
+        default=None,
+        description="Дата и время согласия пользователя на обработку персональных данных",
+    )
 
 
 class LoginResponse(BaseModel):

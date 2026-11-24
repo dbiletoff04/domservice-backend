@@ -22,29 +22,31 @@ router = APIRouter(prefix="/auth", tags=["Аутентификация (F-01)"])
     summary="Запросить одноразовый СМС-код для входа",
     description=(
         "**Доступ:** публичный.\n\n"
-        "Генерирует 4-значный одноразовый код и **записывает его в журнал программы** (вместо реальной отправки СМС).\n\n"
-        "**Тестовые номера по ролям:**\n"
-        "- `+79001112233` — Житель (`resident`)\n"
-        "- `+79002223344` — Диспетчер (`dispatcher`)\n"
-        "- `+79003334455` — Мастер (`master`)\n"
-        "- `+79004445566` — Руководитель УК (`manager`)\n"
-        "- Любой новый номер → автоматически регистрируется как `resident`."
+        "Генерирует 4-значный одноразовый код в журнал программы и сообщает флаг `requires_consent` — "
+        "нужно ли запрашивать согласие на обработку ПДн (при первом входе)."
     ),
 )
-async def request_sms_code(payload: RequestCodeIn) -> RequestCodeOut:
-    phone, ttl = issue_sms_code(payload.phone)
-    return RequestCodeOut(phone=phone, expires_in_seconds=ttl)
+async def request_sms_code(
+    payload: RequestCodeIn,
+    db: AsyncSession = Depends(get_db),
+) -> RequestCodeOut:
+    phone, ttl, requires_consent = await issue_sms_code(db, payload.phone)
+    return RequestCodeOut(
+        phone=phone,
+        expires_in_seconds=ttl,
+        requires_consent=requires_consent,
+    )
 
 
 @router.post(
     "/login",
     response_model=LoginResponse,
     responses=standard_error_responses(400),
-    summary="Вход по номеру телефона и СМС-коду с выдачей JWT",
+    summary="Вход по номеру телефона и СМС-коду с проверкой согласия на ПДн",
     description=(
         "**Доступ:** публичный.\n\n"
-        "Проверяет одноразовый код из журнала, проверяет согласие ФЗ-152 при первом входе (`NFR-08`) "
-        "и возвращает JWT-токен («пропуск») с ролью пользователя."
+        "При первом входе требует `consent_accepted=true` (ФЗ-152, NFR-08), записывает дату согласия "
+        "`consent_at` в базу данных и выдаёт JWT-токен с ролью пользователя."
     ),
 )
 async def login(
@@ -65,6 +67,7 @@ async def login(
             full_name=user.full_name,
             role=UserRoleCode(user.role_code),
             company_id=user.company_id,
+            consent_at=user.consent_at,
         ),
     )
 
@@ -83,4 +86,5 @@ async def get_me(user: CurrentUser = Depends(get_current_user)) -> UserProfile:
         full_name=user.full_name,
         role=UserRoleCode(user.role),
         company_id=user.company_id,
+        consent_at=user.consent_at,
     )
