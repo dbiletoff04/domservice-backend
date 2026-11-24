@@ -1,14 +1,48 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.schemas.common import RequestStatusCode
 
 
 class CreateRequestIn(BaseModel):
-    address: str = Field(..., min_length=3, max_length=255, description="Адрес дома")
-    apartment: str = Field(..., min_length=1, max_length=16, description="Номер квартиры")
+    address: str = Field(..., description="Адрес дома (не пустой, до 255 символов)")
+    apartment: str = Field(..., description="Номер квартиры (не пустой, до 16 символов)")
     category_id: int = Field(..., ge=1, description="ID категории проблемы")
-    description: str = Field(..., min_length=3, max_length=1000, description="Описание проблемы")
+    description: str = Field(..., description="Описание проблемы (не пустое, до 1000 символов)")
+
+    @field_validator("address")
+    @classmethod
+    def validate_address(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Заполните адрес")
+        if len(cleaned) < 3:
+            raise ValueError("Адрес слишком короткий (минимум 3 символа)")
+        if len(cleaned) > 255:
+            raise ValueError("Адрес слишком длинный (максимум 255 символов)")
+        return cleaned
+
+    @field_validator("apartment")
+    @classmethod
+    def validate_apartment(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Укажите номер квартиры")
+        if len(cleaned) > 16:
+            raise ValueError("Номер квартиры слишком длинный (максимум 16 символов)")
+        return cleaned
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Опишите проблему")
+        if len(cleaned) < 3:
+            raise ValueError("Описание проблемы слишком короткое (минимум 3 символа)")
+        if len(cleaned) > 1000:
+            raise ValueError("Описание проблемы слишком длинное (максимум 1000 символов)")
+        return cleaned
 
     model_config = ConfigDict(
         json_schema_extra={

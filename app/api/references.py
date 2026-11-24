@@ -1,4 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.models.references import ProblemCategory, RequestStatus
 from app.schemas.common import RequestStatusCode
 from app.schemas.references import CategoryReferenceItem, StatusReferenceItem
 
@@ -9,35 +14,17 @@ router = APIRouter(prefix="/references", tags=["Справочники"])
     "/statuses",
     response_model=list[StatusReferenceItem],
     summary="Получить перечень всех статусов заявки",
-    description="Доступ: все пользователи. Возвращает 5 статусов жизненного цикла заявки (Р1).",
+    description="Доступ: все пользователи. Возвращает 5 статусов жизненного цикла заявки из БД.",
 )
-async def get_statuses() -> list[StatusReferenceItem]:
+async def get_statuses(db: AsyncSession = Depends(get_db)) -> list[StatusReferenceItem]:
+    rows = (await db.scalars(select(RequestStatus))).all()
     return [
         StatusReferenceItem(
-            status_code=RequestStatusCode.ACCEPTED,
-            name="Принята",
-            description="Заявка создана жителем или диспетчером",
-        ),
-        StatusReferenceItem(
-            status_code=RequestStatusCode.MASTER_ASSIGNED,
-            name="Мастер назначен",
-            description="Назначены мастер и ориентировочный срок; после возврата выполняется заново",
-        ),
-        StatusReferenceItem(
-            status_code=RequestStatusCode.PENDING_CONFIRMATION,
-            name="Ожидает подтверждения",
-            description="Мастер отметил работу выполненной, ожидается ответ жителя",
-        ),
-        StatusReferenceItem(
-            status_code=RequestStatusCode.CLOSED,
-            name="Закрыта",
-            description="Житель подтвердил выполнение работ",
-        ),
-        StatusReferenceItem(
-            status_code=RequestStatusCode.RETURNED,
-            name="Возвращена",
-            description="Житель сообщил, что проблема не решена; комментарий сохранён в истории",
-        ),
+            status_code=RequestStatusCode(row.status_code),
+            name=row.name,
+            description=row.description,
+        )
+        for row in rows
     ]
 
 
@@ -45,14 +32,21 @@ async def get_statuses() -> list[StatusReferenceItem]:
     "/categories",
     response_model=list[CategoryReferenceItem],
     summary="Получить активные категории проблем",
-    description="Доступ: все пользователи. Используется в форме создания заявки.",
+    description="Доступ: все пользователи. Возвращает активные категории из БД.",
 )
-async def get_categories() -> list[CategoryReferenceItem]:
+async def get_categories(db: AsyncSession = Depends(get_db)) -> list[CategoryReferenceItem]:
+    rows = (
+        await db.scalars(
+            select(ProblemCategory)
+            .where(ProblemCategory.is_active.is_(True))
+            .order_by(ProblemCategory.category_id.asc())
+        )
+    ).all()
     return [
-        CategoryReferenceItem(category_id=1, name="Сантехника"),
-        CategoryReferenceItem(category_id=2, name="Электрика"),
-        CategoryReferenceItem(category_id=3, name="Отопление"),
-        CategoryReferenceItem(category_id=4, name="Водоснабжение"),
-        CategoryReferenceItem(category_id=5, name="Лифт"),
-        CategoryReferenceItem(category_id=6, name="Другое"),
+        CategoryReferenceItem(
+            category_id=row.category_id,
+            name=row.name,
+            is_active=row.is_active,
+        )
+        for row in rows
     ]

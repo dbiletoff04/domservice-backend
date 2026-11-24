@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from app.core.security import CurrentUser, get_current_user, require_roles
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.core.security import CurrentUser, require_roles
 from app.schemas.common import RequestStatusCode, STATUS_NAMES, standard_error_responses
 from app.schemas.requests import (
     ConfirmWorkIn,
@@ -12,6 +15,7 @@ from app.schemas.requests import (
     RequestSummaryOut,
     StatusHistoryItemOut,
 )
+from app.services.request_service import create_resident_request
 
 router = APIRouter(prefix="/requests", tags=["Заявки жителя (F-02, F-03, F-04, F-08)"])
 
@@ -24,24 +28,21 @@ NOW = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
     status_code=status.HTTP_201_CREATED,
     responses=standard_error_responses(400, 401, 403),
     summary="Создать заявку (житель)",
-    description="**Доступ:** только `resident`. Создаёт заявку со статусом `accepted` и возвращает номер `REQ-...`.",
+    description="**Доступ:** только `resident`. Проверяет поля и категорию, сохраняет заявку в БД со статусом `accepted`.",
 )
 async def create_request(
     payload: CreateRequestIn,
     user: CurrentUser = Depends(require_roles("resident")),
+    db: AsyncSession = Depends(get_db),
 ) -> RequestCreatedOut:
-    if payload.category_id > 6:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Указанная категория проблемы не найдена или неактивна",
-        )
+    created = await create_resident_request(db=db, user=user, payload=payload)
     return RequestCreatedOut(
-        request_id=123,
-        request_number="REQ-123",
-        status=RequestStatusCode.ACCEPTED,
-        status_name=STATUS_NAMES[RequestStatusCode.ACCEPTED],
+        request_id=created.request_id,
+        request_number=created.request_number,
+        status=RequestStatusCode(created.status_code),
+        status_name=STATUS_NAMES[RequestStatusCode(created.status_code)],
         deadline_display="Уточняется",
-        created_at=NOW,
+        created_at=created.created_at,
         message="Заявка принята",
     )
 
@@ -94,11 +95,7 @@ async def get_my_requests(
     responses=standard_error_responses(401, 403, 404),
     summary="Карточка заявки (подробности и история статусов)",
     description=(
-        "**Доступ:** `resident` (только своя), `dispatcher` (заявки УК), `master` (только назначенная).\n\n"
-        "**Для проверки ошибок на тестовых данных:**\n"
-        "- `request_id = 123` → успешный ответ;\n"
-        "- `request_id = 200` (под ролью `resident`/`master`) → `403` (чужая заявка);\n"
-        "- `request_id = 999` → `404` (не найдена)."
+        "**Доступ:** `resident` (только своя), `dispatcher` (заявки УК), `master` (только назначенная)."
     ),
 )
 async def get_request_detail(
