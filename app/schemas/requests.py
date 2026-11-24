@@ -192,3 +192,39 @@ class MasterTaskItemOut(BaseModel):
     is_returned: bool = False
     return_comment: str | None = None
     deadline_display: str
+
+
+# TEMPORARY (ЛР6): схемы временной смены статуса до реализации рабочего места диспетчера в ЛР7
+class DemoChangeStatusIn(BaseModel):
+    status: RequestStatusCode = Field(..., description="Новый статус заявки")
+    deadline_at: datetime | None = Field(
+        default=None,
+        description="Опционально: установить ориентировочный срок (удобно для статуса master_assigned)",
+    )
+    comment: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Опциональный комментарий для истории статусов",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "status": "master_assigned",
+                "deadline_at": "2026-11-12T12:00:00+03:00",
+                "comment": "Демонстрация смены статуса (в ЛР7 заменит диспетчер)",
+            }
+        }
+    )
+
+
+class DemoChangeStatusOut(BaseModel):
+    request_id: int
+    request_number: str
+    old_status: RequestStatusCode
+    new_status: RequestStatusCode
+    new_status_name: str
+    deadline_display: str
+    notification_queued: bool = True
+    notification_text: str
+    note: str = "Временная функция демонстрации для ЛР6 (в ЛР7 заменяется рабочим местом диспетчера)"

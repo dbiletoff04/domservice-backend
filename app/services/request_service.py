@@ -17,7 +17,7 @@ from app.core.security import CurrentUser
 from app.models.references import ManagementCompany, ProblemCategory
 from app.models.request import Request, RequestStatusHistory
 from app.models.user import AppUser
-from app.schemas.requests import CreateRequestIn
+from app.schemas.requests import CreateRequestIn, DemoChangeStatusIn
 from app.services.notification_service import enqueue_notification
 
 logger = logging.getLogger("domservice.requests")
@@ -175,10 +175,7 @@ async def get_request_detail_for_user(
 ) -> Request:
     """
     Возвращает полную карточку заявки с историей статусов.
-    Проверяет права доступа по ролям (NFR-07):
-    - resident видит только свои заявки;
-    - dispatcher видит заявки своей УК;
-    - master видит только назначенные ему заявки.
+    Проверяет права доступа по ролям (NFR-07).
     """
     stmt = (
         select(Request)
@@ -216,3 +213,107 @@ async def get_request_detail_for_user(
         )
 
     return req
+
+
+# TEMPORARY (ЛР6): служебная смена статуса для демонстрации работы уведомлений.
+# В ЛР7 заменяется рабочим местом диспетчера (F-06) и мастера (F-07).
+async def demo_change_request_status(
+    db: AsyncSession,
+    request_id: int,
+    user: CurrentUser,
+    payload: DemoChangeStatusIn,
+) -> tuple[Request, str, str]:
+    """
+    ВРЕМЕННАЯ ФУНКЦИЯ (ЛР6): меняет статус заявки, пишет строку в историю
+    и ставит уведомление жителю в очередь. В ЛР7 заменяется логикой диспетчера и мастера.
+    """
+    if not settings.app_debug:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Служебное изменение статуса доступно только в режиме отладки",
+        )
+
+    req = await db.scalar(
+        select(Request)
+        .options(selectinload(Request.master))
+        .where(Request.request_id == request_id)
+    )
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Заявка не найдена",
+        )
+
+    if user.role == "resident" and req.resident_id != user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нет доступа к чужой заявке",
+        )
+    if user.role in {"dispatcher", "master", "manager"} and req.company_id != user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нет доступа к заявке другой управляющей компании",
+        )
+
+    old_status = req.status_code
+    new_status = payload.status.value
+    if old_status == new_status:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Заявка уже находится в этом статусе",
+        )
+
+    master_name: str | None = req.master.full_name if req.master else None
+    if new_status == "master_assigned" and req.master_id is None:
+        demo_master = await db.scalar(
+            select(AppUser)
+            .where(AppUser.role_code == "master")
+            .order_by(AppUser.user_id.asc())
+        )
+        if demo_master is not None:
+            req.master_id = demo_master.user_id
+            master_name = demo_master.full_name or demo_master.phone
+
+    if payload.deadline_at is not None:
+        req.deadline_at = payload.deadline_at
+
+    req.status_code = new_status
+    deadline_str = format_deadline(req.deadline_at)
+    notification_text = format_status_notification(
+        status_code=new_status,
+        request_number=req.request_number,
+        master_name=master_name,
+        deadline_display=deadline_str,
+    )
+
+    try:
+        history_entry = RequestStatusHistory(
+            request_id=req.request_id,
+            from_status_code=old_status,
+            to_status_code=new_status,
+            actor_id=user.user_id,
+            comment=payload.comment or f"[Временно ЛР6] Демо-перевод статуса в «{new_status}»",
+        )
+        db.add(history_entry)
+
+        enqueue_notification(
+            db=db,
+            request_id=req.request_id,
+            recipient_id=req.resident_id,
+            status_code=new_status,
+            message_text=notification_text,
+        )
+
+        await db.commit()
+        await db.refresh(req)
+    except Exception:
+        await db.rollback()
+        raise
+
+    logger.info(
+        "[TEMPORARY ЛР6] Статус заявки %s изменён: %s -> %s; уведомление поставлено в очередь",
+        req.request_number,
+        old_status,
+        new_status,
+    )
+    return req, old_status, notification_text
