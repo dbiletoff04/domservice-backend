@@ -1,18 +1,42 @@
 import logging
 import secrets
+from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.security import CurrentUser
 from app.models.references import ManagementCompany, ProblemCategory
 from app.models.request import Request, RequestStatusHistory
+from app.models.user import AppUser
 from app.schemas.requests import CreateRequestIn
 from app.services.notification_service import enqueue_notification
 
 logger = logging.getLogger("domservice.requests")
+
+ROLE_TITLES = {
+    "resident": "Житель",
+    "dispatcher": "Диспетчер УК",
+    "master": "Мастер",
+    "manager": "Руководитель УК",
+}
+
+
+def format_deadline(deadline_at: datetime | None) -> str:
+    if deadline_at is None:
+        return "Уточняется"
+    return deadline_at.strftime("%d.%m.%Y %H:%M")
+
+
+def format_actor_name(actor: AppUser | None) -> str:
+    if actor is None:
+        return "Система"
+    if actor.full_name:
+        return actor.full_name
+    return ROLE_TITLES.get(actor.role_code, actor.phone)
 
 
 async def create_resident_request(
@@ -62,14 +86,11 @@ async def create_resident_request(
     )
 
     try:
-        # 1. Записываем заявку в рамках текущей транзакции и получаем request_id
         db.add(new_request)
         await db.flush()
 
-        # 2. Присваиваем уникальный номер вида REQ-<число>
         new_request.request_number = f"REQ-{new_request.request_id}"
 
-        # 3. Записываем первую строку истории статусов
         history_entry = RequestStatusHistory(
             request_id=new_request.request_id,
             from_status_code=None,
@@ -80,13 +101,11 @@ async def create_resident_request(
         db.add(history_entry)
         await db.flush()
 
-        # Искусственный сбой для проверки атомарности (только в режиме отладки)
         if simulate_error and settings.app_debug:
             raise RuntimeError(
                 "Искусственная ошибка при постановке уведомления в очередь (тест NFR-03)"
             )
 
-        # 4. Ставим сообщение с номером заявки в очередь уведомлений
         enqueue_notification(
             db=db,
             request_id=new_request.request_id,
@@ -95,7 +114,6 @@ async def create_resident_request(
             message_text=f"Заявка {new_request.request_number} принята в работу.",
         )
 
-        # 5. Фиксируем всё одной операцией
         await db.commit()
         await db.refresh(new_request)
     except HTTPException:
@@ -117,5 +135,76 @@ async def create_resident_request(
         "[REQUEST] Создана заявка %s (id=%s), записана история и поставлено уведомление в очередь",
         new_request.request_number,
         new_request.request_id,
-        )
+    )
     return new_request
+
+
+async def list_resident_requests(
+    db: AsyncSession,
+    user: CurrentUser,
+    status_filter: str | None = None,
+) -> list[Request]:
+    """Возвращает только заявки текущего жителя (от новых к старым)."""
+    stmt = (
+        select(Request)
+        .options(
+            selectinload(Request.category),
+            selectinload(Request.status),
+        )
+        .where(Request.resident_id == user.user_id)
+    )
+    if status_filter is not None:
+        stmt = stmt.where(Request.status_code == status_filter)
+
+    stmt = stmt.order_by(Request.created_at.desc())
+    return list((await db.scalars(stmt)).all())
+
+
+async def get_request_detail_for_user(
+    db: AsyncSession,
+    request_id: int,
+    user: CurrentUser,
+) -> Request:
+    """
+    Возвращает полную карточку заявки с историей статусов.
+    Проверяет права доступа по ролям (NFR-07):
+    - resident видит только свои заявки;
+    - dispatcher видит заявки своей УК;
+    - master видит только назначенные ему заявки.
+    """
+    stmt = (
+        select(Request)
+        .options(
+            selectinload(Request.category),
+            selectinload(Request.status),
+            selectinload(Request.master),
+            selectinload(Request.resident),
+            selectinload(Request.history).selectinload(RequestStatusHistory.actor),
+            selectinload(Request.history).selectinload(RequestStatusHistory.to_status),
+        )
+        .where(Request.request_id == request_id)
+    )
+    req = await db.scalar(stmt)
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Заявка не найдена",
+        )
+
+    if user.role == "resident" and req.resident_id != user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нет доступа к чужой заявке",
+        )
+    if user.role == "dispatcher" and req.company_id != user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нет доступа к заявке другой управляющей компании",
+        )
+    if user.role == "master" and req.master_id != user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нет доступа: заявка не назначена этому мастеру",
+        )
+
+    return req

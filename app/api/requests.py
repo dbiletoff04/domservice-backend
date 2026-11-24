@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,11 +14,15 @@ from app.schemas.requests import (
     RequestSummaryOut,
     StatusHistoryItemOut,
 )
-from app.services.request_service import create_resident_request
+from app.services.request_service import (
+    create_resident_request,
+    format_actor_name,
+    format_deadline,
+    get_request_detail_for_user,
+    list_resident_requests,
+)
 
 router = APIRouter(prefix="/requests", tags=["Заявки жителя (F-02, F-03, F-04, F-08)"])
-
-NOW = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
 
 
 @router.post(
@@ -54,7 +57,7 @@ async def create_request(
         request_number=created.request_number,
         status=RequestStatusCode(created.status_code),
         status_name=STATUS_NAMES[RequestStatusCode(created.status_code)],
-        deadline_display="Уточняется",
+        deadline_display=format_deadline(created.deadline_at),
         created_at=created.created_at,
         message="Заявка принята",
     )
@@ -65,100 +68,106 @@ async def create_request(
     response_model=list[RequestSummaryOut],
     responses=standard_error_responses(401, 403),
     summary="Список своих заявок (житель)",
-    description="**Доступ:** только `resident`. Возвращает только заявки текущего жителя.",
+    description="**Доступ:** только `resident`. Возвращает из БД только заявки текущего жителя.",
 )
 async def get_my_requests(
     status_filter: RequestStatusCode | None = Query(default=None, alias="status"),
     user: CurrentUser = Depends(require_roles("resident")),
+    db: AsyncSession = Depends(get_db),
 ) -> list[RequestSummaryOut]:
-    items = [
+    rows = await list_resident_requests(
+        db=db,
+        user=user,
+        status_filter=status_filter.value if status_filter else None,
+    )
+    return [
         RequestSummaryOut(
-            request_id=123,
-            request_number="REQ-123",
-            category_name="Сантехника",
-            address="г. Волжский, ул. Ленина, д. 97",
-            apartment="42",
-            status=RequestStatusCode.MASTER_ASSIGNED,
-            status_name=STATUS_NAMES[RequestStatusCode.MASTER_ASSIGNED],
-            deadline_at=datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc),
-            deadline_display="11.11.2026 12:00",
-            created_at=NOW,
-        ),
-        RequestSummaryOut(
-            request_id=120,
-            request_number="REQ-120",
-            category_name="Отопление",
-            address="г. Волжский, ул. Ленина, д. 97",
-            apartment="42",
-            status=RequestStatusCode.CLOSED,
-            status_name=STATUS_NAMES[RequestStatusCode.CLOSED],
-            deadline_at=datetime(2026, 11, 5, 16, 0, tzinfo=timezone.utc),
-            deadline_display="05.11.2026 16:00",
-            created_at=datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc),
-        ),
+            request_id=req.request_id,
+            request_number=req.request_number,
+            category_name=req.category.name if req.category else "",
+            address=req.address,
+            apartment=req.apartment,
+            status=RequestStatusCode(req.status_code),
+            status_name=(
+                req.status.name
+                if req.status
+                else STATUS_NAMES[RequestStatusCode(req.status_code)]
+            ),
+            deadline_at=req.deadline_at,
+            deadline_display=format_deadline(req.deadline_at),
+            created_at=req.created_at,
+        )
+        for req in rows
     ]
-    if status_filter is not None:
-        return [item for item in items if item.status == status_filter]
-    return items
 
 
 @router.get(
     "/{request_id}",
     response_model=RequestDetailOut,
     responses=standard_error_responses(401, 403, 404),
-    summary="Карточка заявки (подробности и история статусов)",
+    summary="Карточка заявки (подробности, срок и история статусов)",
     description=(
-        "**Доступ:** `resident` (только своя), `dispatcher` (заявки УК), `master` (только назначенная)."
+        "**Доступ:** `resident` (только своя), `dispatcher` (заявки своей УК), `master` (только назначенная).\n\n"
+        "При попытке открыть чужую заявку возвращает `403 Forbidden` («Нет доступа к чужой заявке», `NFR-07`)."
     ),
 )
 async def get_request_detail(
     request_id: int,
     user: CurrentUser = Depends(require_roles("resident", "dispatcher", "master")),
+    db: AsyncSession = Depends(get_db),
 ) -> RequestDetailOut:
-    if request_id == 999:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
-    if request_id == 200 and user.role in {"resident", "master"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ к чужой заявке запрещён (NFR-07)",
+    req = await get_request_detail_for_user(db=db, request_id=request_id, user=user)
+
+    master_name: str | None = None
+    if req.master is not None:
+        master_name = req.master.full_name or req.master.phone
+
+    history_items = [
+        StatusHistoryItemOut(
+            history_id=item.history_id,
+            from_status=(
+                RequestStatusCode(item.from_status_code)
+                if item.from_status_code
+                else None
+            ),
+            to_status=RequestStatusCode(item.to_status_code),
+            to_status_name=(
+                item.to_status.name
+                if item.to_status
+                else STATUS_NAMES[RequestStatusCode(item.to_status_code)]
+            ),
+            actor_name=format_actor_name(item.actor),
+            comment=item.comment,
+            changed_at=item.changed_at,
         )
+        for item in sorted(req.history, key=lambda h: h.changed_at)
+    ]
 
     return RequestDetailOut(
-        request_id=request_id,
-        request_number=f"REQ-{request_id}",
-        address="г. Волжский, ул. Ленина, д. 97",
-        apartment="42",
-        category_id=1,
-        category_name="Сантехника",
-        description="Протекает кран на кухне под раковиной",
-        status=RequestStatusCode.MASTER_ASSIGNED,
-        status_name=STATUS_NAMES[RequestStatusCode.MASTER_ASSIGNED],
-        master_name="Петров И. С.",
-        resident_phone="+79001112233" if user.role in {"dispatcher", "master"} else None,
-        deadline_at=datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc),
-        deadline_display="11.11.2026 12:00",
-        created_at=NOW,
-        updated_at=datetime(2026, 11, 10, 15, 10, tzinfo=timezone.utc),
-        history=[
-            StatusHistoryItemOut(
-                history_id=1,
-                from_status=None,
-                to_status=RequestStatusCode.ACCEPTED,
-                to_status_name=STATUS_NAMES[RequestStatusCode.ACCEPTED],
-                actor_name="Кузнецова А. Д.",
-                comment=None,
-                changed_at=NOW,
-            ),
-            StatusHistoryItemOut(
-                history_id=2,
-                from_status=RequestStatusCode.ACCEPTED,
-                to_status=RequestStatusCode.MASTER_ASSIGNED,
-                to_status_name=STATUS_NAMES[RequestStatusCode.MASTER_ASSIGNED],
-                actor_name="Смирнова Е. В.",
-                comment="Назначен мастер Петров И. С.",
-                changed_at=datetime(2026, 11, 10, 15, 10, tzinfo=timezone.utc),
-            ),
-        ],
+        request_id=req.request_id,
+        request_number=req.request_number,
+        address=req.address,
+        apartment=req.apartment,
+        category_id=req.category_id,
+        category_name=req.category.name if req.category else "",
+        description=req.description,
+        status=RequestStatusCode(req.status_code),
+        status_name=(
+            req.status.name
+            if req.status
+            else STATUS_NAMES[RequestStatusCode(req.status_code)]
+        ),
+        master_name=master_name,
+        resident_phone=(
+            req.resident.phone
+            if req.resident and user.role in {"dispatcher", "master"}
+            else None
+        ),
+        deadline_at=req.deadline_at,
+        deadline_display=format_deadline(req.deadline_at),
+        created_at=req.created_at,
+        updated_at=req.updated_at,
+        history=history_items,
     )
 
 
