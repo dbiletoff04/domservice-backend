@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from app.core.security import DemoUser, require_roles
+from app.core.security import CurrentUser, require_roles
 from app.schemas.common import RequestStatusCode, standard_error_responses
 from app.schemas.reports import GisReportPreviewOut, GisReportRowOut
 
@@ -24,7 +24,7 @@ async def export_gis_report(
     start_date: date = Query(default=date(2026, 10, 1)),
     end_date: date = Query(default=date(2026, 12, 31)),
     output_format: Literal["json", "csv"] = Query(default="json", alias="format"),
-    user: DemoUser = Depends(require_roles("manager")),
+    user: CurrentUser = Depends(require_roles("manager")),
 ):
     if start_date > end_date:
         raise HTTPException(

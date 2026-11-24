@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query
-from app.core.security import DemoUser, require_roles
+from app.core.security import CurrentUser, require_roles
 from app.schemas.common import RequestStatusCode, STATUS_NAMES, standard_error_responses
 from app.schemas.notifications import NotificationItemOut
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/notifications", tags=["Уведомления жит
 )
 async def get_my_notifications(
     request_id: int | None = Query(default=None),
-    user: DemoUser = Depends(require_roles("resident")),
+    user: CurrentUser = Depends(require_roles("resident")),
 ) -> list[NotificationItemOut]:
     items = [
         NotificationItemOut(

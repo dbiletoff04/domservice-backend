@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/domservice"
     auto_init_db: bool = True
 
+    jwt_secret_key: str = "domservice-dev-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 часа
+    sms_code_ttl_seconds: int = 300  # 5 минут
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

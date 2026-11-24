@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,6 +10,11 @@ from app.core.config import settings
 from app.core.database import engine
 from app.core.init_db import init_db
 from app.workers.notification_worker import run_notification_worker
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 
 @asynccontextmanager
@@ -30,9 +36,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.2.0",
+    version="0.3.0",
     description=(
-        "Спецификация API сервиса подачи и отслеживания заявок жителей в УК.\n\n"
+        "Модульный монолит сервиса подачи и отслеживания заявок жителей в УК.\n\n"
         "**Статусы заявок:** `accepted` (Принята), `master_assigned` (Мастер назначен), "
         "`pending_confirmation` (Ожидает подтверждения), `closed` (Закрыта), `returned` (Возвращена)."
     ),

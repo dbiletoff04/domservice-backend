@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from app.core.security import DemoUser, get_current_user, require_roles
+from app.core.security import CurrentUser, get_current_user, require_roles
 from app.schemas.common import RequestStatusCode, STATUS_NAMES, standard_error_responses
 from app.schemas.requests import (
     ConfirmWorkIn,
@@ -28,7 +28,7 @@ NOW = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
 )
 async def create_request(
     payload: CreateRequestIn,
-    user: DemoUser = Depends(require_roles("resident")),
+    user: CurrentUser = Depends(require_roles("resident")),
 ) -> RequestCreatedOut:
     if payload.category_id > 6:
         raise HTTPException(
@@ -55,7 +55,7 @@ async def create_request(
 )
 async def get_my_requests(
     status_filter: RequestStatusCode | None = Query(default=None, alias="status"),
-    user: DemoUser = Depends(require_roles("resident")),
+    user: CurrentUser = Depends(require_roles("resident")),
 ) -> list[RequestSummaryOut]:
     items = [
         RequestSummaryOut(
@@ -103,7 +103,7 @@ async def get_my_requests(
 )
 async def get_request_detail(
     request_id: int,
-    user: DemoUser = Depends(require_roles("resident", "dispatcher", "master")),
+    user: CurrentUser = Depends(require_roles("resident", "dispatcher", "master")),
 ) -> RequestDetailOut:
     if request_id == 999:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
@@ -162,7 +162,7 @@ async def get_request_detail(
 async def confirm_work(
     request_id: int,
     payload: ConfirmWorkIn,
-    user: DemoUser = Depends(require_roles("resident")),
+    user: CurrentUser = Depends(require_roles("resident")),
 ) -> RequestStatusActionOut:
     if request_id == 999:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
@@ -191,7 +191,7 @@ async def confirm_work(
 async def reject_work(
     request_id: int,
     payload: RejectWorkIn,
-    user: DemoUser = Depends(require_roles("resident")),
+    user: CurrentUser = Depends(require_roles("resident")),
 ) -> RequestStatusActionOut:
     if request_id == 999:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")

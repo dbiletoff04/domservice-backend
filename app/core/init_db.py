@@ -1,7 +1,8 @@
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.database import Base, async_session_factory, engine
-from app.models import (  # noqa: F401 - регистрация всех моделей в Base.metadata
+from app.models import (  # noqa: F401
     AppUser,
     ManagementCompany,
     Notification,
@@ -82,7 +83,7 @@ SEED_CATEGORIES = [
 
 
 async def init_db() -> None:
-    """Создаёт отсутствующие таблицы в пустой БД и наполняет справочники (идемпотентно)."""
+    """Создаёт отсутствующие таблицы в пустой БД и наполняет справочники + тестовых пользователей 4 ролей."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -106,5 +107,46 @@ async def init_db() -> None:
             pg_insert(ProblemCategory)
             .values(SEED_CATEGORIES)
             .on_conflict_do_nothing(index_elements=["name"])
+        )
+        await session.flush()
+
+        company = await session.scalar(
+            select(ManagementCompany).where(
+                ManagementCompany.name == "УК «Домсервис» (пилот)"
+            )
+        )
+        pilot_company_id = company.company_id if company else 1
+
+        seed_users = [
+            {
+                "phone": "+79001112233",
+                "full_name": "Кузнецова А. Д.",
+                "role_code": "resident",
+                "company_id": None,
+            },
+            {
+                "phone": "+79002223344",
+                "full_name": "Смирнова Е. В.",
+                "role_code": "dispatcher",
+                "company_id": pilot_company_id,
+            },
+            {
+                "phone": "+79003334455",
+                "full_name": "Петров И. С.",
+                "role_code": "master",
+                "company_id": pilot_company_id,
+            },
+            {
+                "phone": "+79004445566",
+                "full_name": "Волков А. Н.",
+                "role_code": "manager",
+                "company_id": pilot_company_id,
+            },
+        ]
+
+        await session.execute(
+            pg_insert(AppUser)
+            .values(seed_users)
+            .on_conflict_do_nothing(index_elements=["phone"])
         )
         await session.commit()

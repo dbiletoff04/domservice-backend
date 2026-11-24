@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from app.core.security import DemoUser, require_roles
+from app.core.security import CurrentUser, require_roles
 from app.schemas.common import RequestStatusCode, STATUS_NAMES, standard_error_responses
 from app.schemas.requests import (
     AssignMasterIn,
@@ -24,7 +24,7 @@ NOW = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
 )
 async def get_dispatcher_requests(
     status_filter: RequestStatusCode | None = Query(default=None, alias="status"),
-    user: DemoUser = Depends(require_roles("dispatcher")),
+    user: CurrentUser = Depends(require_roles("dispatcher")),
 ) -> list[DispatcherRequestItemOut]:
     items = [
         DispatcherRequestItemOut(
@@ -71,7 +71,7 @@ async def get_dispatcher_requests(
 )
 async def create_request_by_phone(
     payload: DispatcherCreateRequestIn,
-    user: DemoUser = Depends(require_roles("dispatcher")),
+    user: CurrentUser = Depends(require_roles("dispatcher")),
 ) -> RequestCreatedOut:
     return RequestCreatedOut(
         request_id=125,
@@ -94,7 +94,7 @@ async def create_request_by_phone(
 async def assign_master(
     request_id: int,
     payload: AssignMasterIn,
-    user: DemoUser = Depends(require_roles("dispatcher")),
+    user: CurrentUser = Depends(require_roles("dispatcher")),
 ) -> RequestStatusActionOut:
     if request_id == 999:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")

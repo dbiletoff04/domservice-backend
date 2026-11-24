@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from app.core.security import DemoUser, require_roles
+from app.core.security import CurrentUser, require_roles
 from app.schemas.common import RequestStatusCode, STATUS_NAMES, standard_error_responses
 from app.schemas.requests import (
     CompleteTaskIn,
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/master", tags=["Мастер (F-07, F-09)"])
 )
 async def get_master_tasks(
     status_filter: RequestStatusCode | None = Query(default=None, alias="status"),
-    user: DemoUser = Depends(require_roles("master")),
+    user: CurrentUser = Depends(require_roles("master")),
 ) -> list[MasterTaskItemOut]:
     items = [
         MasterTaskItemOut(
@@ -64,7 +64,7 @@ async def get_master_tasks(
 async def complete_task(
     request_id: int,
     payload: CompleteTaskIn,
-    user: DemoUser = Depends(require_roles("master")),
+    user: CurrentUser = Depends(require_roles("master")),
 ) -> RequestStatusActionOut:
     if request_id == 999:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
