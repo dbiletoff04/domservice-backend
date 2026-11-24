@@ -28,14 +28,27 @@ NOW = datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc)
     status_code=status.HTTP_201_CREATED,
     responses=standard_error_responses(400, 401, 403),
     summary="Создать заявку (житель)",
-    description="**Доступ:** только `resident`. Проверяет поля и категорию, сохраняет заявку в БД со статусом `accepted`.",
+    description=(
+        "**Доступ:** только `resident`. Атомарно создаёт заявку со статусом `accepted`, "
+        "присваивает номер `REQ-...`, добавляет первую запись истории и ставит уведомление в очередь.\n\n"
+        "Параметр `simulate_error=true` (при `APP_DEBUG=true`) позволяет проверить откат транзакции при сбое (`NFR-03`)."
+    ),
 )
 async def create_request(
     payload: CreateRequestIn,
+    simulate_error: bool = Query(
+        default=False,
+        description="Искусственная ошибка перед записью уведомления (для проверки NFR-03)",
+    ),
     user: CurrentUser = Depends(require_roles("resident")),
     db: AsyncSession = Depends(get_db),
 ) -> RequestCreatedOut:
-    created = await create_resident_request(db=db, user=user, payload=payload)
+    created = await create_resident_request(
+        db=db,
+        user=user,
+        payload=payload,
+        simulate_error=simulate_error,
+    )
     return RequestCreatedOut(
         request_id=created.request_id,
         request_number=created.request_number,

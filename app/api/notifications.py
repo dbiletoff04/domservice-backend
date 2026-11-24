@@ -1,7 +1,12 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
 from app.core.security import CurrentUser, require_roles
-from app.schemas.common import RequestStatusCode, STATUS_NAMES, standard_error_responses
+from app.models.references import RequestStatus
+from app.models.request import Notification, Request
+from app.schemas.common import RequestStatusCode, standard_error_responses
 from app.schemas.notifications import NotificationItemOut
 
 router = APIRouter(prefix="/notifications", tags=["Уведомления жителя (F-05)"])
@@ -11,37 +16,36 @@ router = APIRouter(prefix="/notifications", tags=["Уведомления жит
     "/my",
     response_model=list[NotificationItemOut],
     responses=standard_error_responses(401, 403),
-    summary="Список уведомлений жителя",
-    description="**Доступ:** `resident`. Показывает все уведомления по заявкам жителя (резерв при недоставке СМС).",
+    summary="Список уведомлений жителя (из БД / очереди)",
+    description="**Доступ:** `resident`. Показывает уведомления по заявкам текущего жителя.",
 )
 async def get_my_notifications(
     request_id: int | None = Query(default=None),
     user: CurrentUser = Depends(require_roles("resident")),
+    db: AsyncSession = Depends(get_db),
 ) -> list[NotificationItemOut]:
-    items = [
-        NotificationItemOut(
-            notification_id=2,
-            request_id=123,
-            request_number="REQ-123",
-            status=RequestStatusCode.MASTER_ASSIGNED,
-            status_name=STATUS_NAMES[RequestStatusCode.MASTER_ASSIGNED],
-            message_text="Заявка REQ-123: назначен мастер Петров И. С., плановый срок 11.11.2026 12:00",
-            state="sent",
-            created_at=datetime(2026, 11, 10, 15, 10, tzinfo=timezone.utc),
-            sent_at=datetime(2026, 11, 10, 15, 10, 12, tzinfo=timezone.utc),
-        ),
-        NotificationItemOut(
-            notification_id=1,
-            request_id=123,
-            request_number="REQ-123",
-            status=RequestStatusCode.ACCEPTED,
-            status_name=STATUS_NAMES[RequestStatusCode.ACCEPTED],
-            message_text="Заявка REQ-123 принята в работу",
-            state="sent",
-            created_at=datetime(2026, 11, 10, 15, 0, tzinfo=timezone.utc),
-            sent_at=datetime(2026, 11, 10, 15, 0, 8, tzinfo=timezone.utc),
-        ),
-    ]
+    stmt = (
+        select(Notification, Request.request_number, RequestStatus.name)
+        .join(Request, Notification.request_id == Request.request_id)
+        .join(RequestStatus, Notification.status_code == RequestStatus.status_code)
+        .where(Notification.recipient_id == user.user_id)
+    )
     if request_id is not None:
-        return [item for item in items if item.request_id == request_id]
-    return items
+        stmt = stmt.where(Notification.request_id == request_id)
+    stmt = stmt.order_by(Notification.created_at.desc())
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        NotificationItemOut(
+            notification_id=notif.notification_id,
+            request_id=notif.request_id,
+            request_number=req_number,
+            status=RequestStatusCode(notif.status_code),
+            status_name=status_name,
+            message_text=notif.message_text,
+            state=notif.state,
+            created_at=notif.created_at,
+            sent_at=notif.sent_at,
+        )
+        for notif, req_number, status_name in rows
+    ]
