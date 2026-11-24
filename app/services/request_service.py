@@ -8,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.messages import (
+    UI_ERROR_CATEGORY_REQUIRED,
+    UI_ERROR_SEND_FAILED,
+    format_status_notification,
+)
 from app.core.security import CurrentUser
 from app.models.references import ManagementCompany, ProblemCategory
 from app.models.request import Request, RequestStatusHistory
@@ -61,7 +66,7 @@ async def create_resident_request(
     if category is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Указанная категория проблемы не найдена или неактивна",
+            detail=UI_ERROR_CATEGORY_REQUIRED,
         )
 
     company = await db.scalar(
@@ -111,7 +116,10 @@ async def create_resident_request(
             request_id=new_request.request_id,
             recipient_id=user.user_id,
             status_code="accepted",
-            message_text=f"Заявка {new_request.request_number} принята в работу.",
+            message_text=format_status_notification(
+                status_code="accepted",
+                request_number=new_request.request_number,
+            ),
         )
 
         await db.commit()
@@ -128,7 +136,7 @@ async def create_resident_request(
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Заявка не отправлена из-за сбоя сохранения. Повторите попытку.",
+            detail=UI_ERROR_SEND_FAILED,
         ) from exc
 
     logger.info(

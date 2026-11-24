@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.core.messages import UI_ERROR_PLACE_REQUIRED
 from app.schemas.common import RequestStatusCode
 
 
@@ -15,7 +16,7 @@ class CreateRequestIn(BaseModel):
     def validate_address(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
-            raise ValueError("Заполните адрес")
+            raise ValueError(UI_ERROR_PLACE_REQUIRED)
         if len(cleaned) < 3:
             raise ValueError("Адрес слишком короткий (минимум 3 символа)")
         if len(cleaned) > 255:
@@ -27,7 +28,7 @@ class CreateRequestIn(BaseModel):
     def validate_apartment(cls, value: str) -> str:
         cleaned = value.strip()
         if not cleaned:
-            raise ValueError("Укажите номер квартиры")
+            raise ValueError(UI_ERROR_PLACE_REQUIRED)
         if len(cleaned) > 16:
             raise ValueError("Номер квартиры слишком длинный (максимум 16 символов)")
         return cleaned

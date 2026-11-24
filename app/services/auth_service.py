@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.messages import UI_ERROR_CONSENT_REQUIRED, UI_ERROR_WRONG_CODE
 from app.core.security import create_access_token
 from app.models.user import AppUser
 
@@ -91,7 +92,7 @@ def validate_sms_code(phone: str, code: str) -> None:
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Неверный СМС-код.",
+            detail=UI_ERROR_WRONG_CODE,
         )
 
 
@@ -115,7 +116,7 @@ async def authenticate_with_sms(
         if not consent_accepted:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Необходимо согласие на обработку данных",
+                detail=UI_ERROR_CONSENT_REQUIRED,
             )
         user = AppUser(
             phone=phone,
@@ -127,19 +128,26 @@ async def authenticate_with_sms(
         db.add(user)
         await db.commit()
         await db.refresh(user)
-        logger.info("[CONSENT] Зарегистрирован новый пользователь и записано согласие: phone=%s, consent_at=%s", phone, now.isoformat())
+        logger.info(
+            "[CONSENT] Зарегистрирован новый пользователь и записано согласие: phone=%s, consent_at=%s",
+            phone,
+            now.isoformat(),
+        )
     elif user.consent_at is None:
         if not consent_accepted:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Необходимо согласие на обработку данных",
+                detail=UI_ERROR_CONSENT_REQUIRED,
             )
         user.consent_at = now
         await db.commit()
         await db.refresh(user)
-        logger.info("[CONSENT] Записано согласие при первом входе: user_id=%s, consent_at=%s", user.user_id, now.isoformat())
+        logger.info(
+            "[CONSENT] Записано согласие при первом входе: user_id=%s, consent_at=%s",
+            user.user_id,
+            now.isoformat(),
+        )
 
-    # Удаляем одноразовый код только после успешного входа
     consume_sms_code(phone)
 
     token = create_access_token(user)

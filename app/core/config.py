@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440  # 24 часа
     sms_code_ttl_seconds: int = 300  # 5 минут
 
+    notification_poll_interval_seconds: int = 5
+    notification_max_attempts: int = 5
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -20,3 +23,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
