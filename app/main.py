@@ -24,6 +24,7 @@ FIELD_LABELS = {
     "category_id": "категорию проблемы",
     "description": "описание проблемы",
     "phone": "номер телефона",
+    "full_name": "ФИО",
     "code": "СМС-код",
     "comment": "комментарий",
 }
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.4.0",
+    version="0.6.0",
     description=(
         "Модульный монолит сервиса подачи и отслеживания заявок жителей в УК.\n\n"
         "**Статусы заявок:** `accepted` (Принята), `master_assigned` (Мастер назначен), "

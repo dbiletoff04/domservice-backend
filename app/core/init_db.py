@@ -1,4 +1,6 @@
-from sqlalchemy import select
+from datetime import datetime, timezone
+
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.database import Base, async_session_factory, engine
@@ -83,7 +85,7 @@ SEED_CATEGORIES = [
 
 
 async def init_db() -> None:
-    """Создаёт отсутствующие таблицы в пустой БД и наполняет справочники + тестовых пользователей 4 ролей."""
+    """Создаёт отсутствующие таблицы в пустой БД и наполняет справочники + стартовых пользователей."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -110,43 +112,55 @@ async def init_db() -> None:
         )
         await session.flush()
 
-        company = await session.scalar(
-            select(ManagementCompany).where(
-                ManagementCompany.name == "УК «Домсервис» (пилот)"
+        users_count = await session.scalar(select(func.count(AppUser.user_id)))
+        if users_count == 0:
+            company = await session.scalar(
+                select(ManagementCompany).order_by(ManagementCompany.company_id.asc())
             )
-        )
-        pilot_company_id = company.company_id if company else 1
+            pilot_company_id = company.company_id if company else 1
+            now = datetime.now(timezone.utc)
 
-        seed_users = [
-            {
-                "phone": "+79001112233",
-                "full_name": "Кузнецова А. Д.",
-                "role_code": "resident",
-                "company_id": None,
-            },
-            {
-                "phone": "+79002223344",
-                "full_name": "Смирнова Е. В.",
-                "role_code": "dispatcher",
-                "company_id": pilot_company_id,
-            },
-            {
-                "phone": "+79003334455",
-                "full_name": "Петров И. С.",
-                "role_code": "master",
-                "company_id": pilot_company_id,
-            },
-            {
-                "phone": "+79004445566",
-                "full_name": "Волков А. Н.",
-                "role_code": "manager",
-                "company_id": pilot_company_id,
-            },
-        ]
+            seed_users = [
+                {
+                    "phone": "79001112233",
+                    "full_name": "Иванов Иван (Житель 1)",
+                    "role_code": "resident",
+                    "company_id": None,
+                    "consent_at": now,
+                },
+                {
+                    "phone": "79004445566",
+                    "full_name": "Петрова Анна (Житель 2)",
+                    "role_code": "resident",
+                    "company_id": None,
+                    "consent_at": now,
+                },
+                {
+                    "phone": "79007778899",
+                    "full_name": "Сидоров Петр (Диспетчер)",
+                    "role_code": "dispatcher",
+                    "company_id": pilot_company_id,
+                    "consent_at": now,
+                },
+                {
+                    "phone": "79002223344",
+                    "full_name": "Мастеров Алексей (Мастер 1)",
+                    "role_code": "master",
+                    "company_id": pilot_company_id,
+                    "consent_at": now,
+                },
+                {
+                    "phone": "79005556677",
+                    "full_name": "Начальников Олег (Руководитель)",
+                    "role_code": "manager",
+                    "company_id": pilot_company_id,
+                    "consent_at": now,
+                },
+            ]
+            await session.execute(
+                pg_insert(AppUser)
+                .values(seed_users)
+                .on_conflict_do_nothing(index_elements=["phone"])
+            )
 
-        await session.execute(
-            pg_insert(AppUser)
-            .values(seed_users)
-            .on_conflict_do_nothing(index_elements=["phone"])
-        )
         await session.commit()
