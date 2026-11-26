@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.database import Base, async_session_factory, engine
@@ -85,9 +85,25 @@ SEED_CATEGORIES = [
 
 
 async def init_db() -> None:
-    """Создаёт отсутствующие таблицы в пустой БД и наполняет справочники + стартовых пользователей."""
+    """Создаёт таблицы в пустой БД, обновляет схему под Р8 и наполняет справочники."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Безопасное обновление уже существующей таблицы request под диаграмму Р8
+        await conn.execute(
+            text("ALTER TABLE request ADD COLUMN IF NOT EXISTS submission_key UUID")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE request ADD COLUMN IF NOT EXISTS submission_fingerprint VARCHAR(64)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_request_resident_submission_key "
+                "ON request (resident_id, submission_key) "
+                "WHERE submission_key IS NOT NULL"
+            )
+        )
 
     async with async_session_factory() as session:
         await session.execute(

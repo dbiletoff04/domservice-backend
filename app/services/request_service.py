@@ -1,5 +1,7 @@
+import hashlib
 import logging
 import secrets
+import uuid
 from datetime import datetime
 
 from fastapi import HTTPException, status
@@ -44,19 +46,58 @@ def format_actor_name(actor: AppUser | None) -> str:
     return ROLE_TITLES.get(actor.role_code, actor.phone)
 
 
+def build_submission_fingerprint(user_id: int, payload: CreateRequestIn) -> str:
+    raw = (
+        f"{user_id}|{payload.category_id}|{payload.address}|"
+        f"{payload.apartment}|{payload.description}"
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 async def create_resident_request(
     db: AsyncSession,
     user: CurrentUser,
     payload: CreateRequestIn,
     simulate_error: bool = False,
+    idempotency_key: str | None = None,
 ) -> Request:
     """
-    Атомарно (в одной транзакции) сохраняет:
-    1) заявку с уникальным номером REQ-<id>,
-    2) первую запись истории статусов,
-    3) уведомление жителю в очередь (state='new').
-    При любом сбое выполняется rollback — в БД не остаётся неполных данных (NFR-03).
+    Атомарно (в одной транзакции) сохраняет заявку с номером REQ-<id>,
+    первую запись истории и уведомление в очередь (NFR-03).
+    При повторе с тем же Idempotency-Key и теми же данными возвращает прежнюю заявку (Р8).
     """
+    submission_uuid: uuid.UUID | None = None
+    fingerprint: str | None = None
+
+    if idempotency_key is not None and idempotency_key.strip():
+        try:
+            submission_uuid = uuid.UUID(idempotency_key.strip())
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Некорректный формат заголовка Idempotency-Key (ожидается UUID)",
+            ) from exc
+
+        fingerprint = build_submission_fingerprint(user.user_id, payload)
+        existing = await db.scalar(
+            select(Request).where(
+                Request.resident_id == user.user_id,
+                Request.submission_key == submission_uuid,
+            )
+        )
+        if existing is not None:
+            if existing.submission_fingerprint == fingerprint:
+                logger.info(
+                    "[IDEMPOTENCY] Повторный запрос с тем же Idempotency-Key=%s -> возвращена %s",
+                    submission_uuid,
+                    existing.request_number,
+                )
+                return existing
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ключ Idempotency-Key уже использован для другой заявки",
+            )
+
     category = await db.scalar(
         select(ProblemCategory).where(
             ProblemCategory.category_id == payload.category_id,
@@ -81,6 +122,8 @@ async def create_resident_request(
     temp_number = f"TMP-{secrets.token_hex(5)}"
     new_request = Request(
         request_number=temp_number,
+        submission_key=submission_uuid,
+        submission_fingerprint=fingerprint,
         resident_id=user.user_id,
         company_id=company.company_id,
         category_id=category.category_id,

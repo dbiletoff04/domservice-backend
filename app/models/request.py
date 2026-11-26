@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -10,7 +11,9 @@ from sqlalchemy import (
     String,
     desc,
     func,
+    text,
 )
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -24,6 +27,13 @@ class Request(Base):
         Index("ix_request_master_id", "master_id"),
         Index("ix_request_company_status", "company_id", "status_code"),
         Index("ix_request_created_at", desc("created_at")),
+        Index(
+            "uq_request_resident_submission_key",
+            "resident_id",
+            "submission_key",
+            unique=True,
+            postgresql_where=text("submission_key IS NOT NULL"),
+        ),
     )
 
     request_id: Mapped[int] = mapped_column(
@@ -31,6 +41,12 @@ class Request(Base):
     )
     request_number: Mapped[str] = mapped_column(
         String(16), nullable=False, unique=True
+    )
+    submission_key: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    submission_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
     resident_id: Mapped[int] = mapped_column(
         Integer,

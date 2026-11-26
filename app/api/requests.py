@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -29,16 +29,23 @@ router = APIRouter(prefix="/requests", tags=["Заявки жителя (F-02, F
     "",
     response_model=RequestCreatedOut,
     status_code=status.HTTP_201_CREATED,
-    responses=standard_error_responses(400, 401, 403),
+    responses=standard_error_responses(400, 401, 403, 409),
     summary="Создать заявку (житель)",
     description=(
         "**Доступ:** только `resident`. Атомарно создаёт заявку со статусом `accepted`, "
         "присваивает номер `REQ-...`, добавляет первую запись истории и ставит уведомление в очередь.\n\n"
+        "Поддерживает заголовок `Idempotency-Key` (UUID) — повторный запрос с тем же ключом и данными "
+        "не создаст дубликат и вернёт прежний номер заявки (Р8).\n\n"
         "Параметр `simulate_error=true` (при `APP_DEBUG=true`) позволяет проверить откат транзакции при сбое (`NFR-03`)."
     ),
 )
 async def create_request(
     payload: CreateRequestIn,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+        description="Необязательный UUID для защиты от дублей при повторной отправке",
+    ),
     simulate_error: bool = Query(
         default=False,
         description="Искусственная ошибка перед записью уведомления (для проверки NFR-03)",
@@ -51,6 +58,7 @@ async def create_request(
         user=user,
         payload=payload,
         simulate_error=simulate_error,
+        idempotency_key=idempotency_key,
     )
     return RequestCreatedOut(
         request_id=created.request_id,
